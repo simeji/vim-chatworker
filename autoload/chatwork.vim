@@ -15,6 +15,7 @@ let s:baseUri = 'https://api.chatwork.com/v1'
 let s:paths = {
  \   'rooms' : { 'path' : '/rooms', 'method' : 'get' },
  \   'post_message' : { 'path' : '/rooms/__rid__/messages', 'method' : 'post' },
+ \   'messages' : { 'path' : '/rooms/__rid__/messages', 'method' : 'get' },
  \ }
 " }}}
 
@@ -37,11 +38,71 @@ function! chatwork#getRoomList()
   return roomData
 endfunction
 
+function! chatwork#getMessageList(rid)
+  let messageData = []
+  let rid = a:rid
+
+  " content cache
+  if !exists('s:messageList')
+    let s:messageList = {}
+  endif
+  let s:messageList[rid] = has_key(s:messageList, rid) ?
+        \ s:messageList[rid] :
+        \ s:requestApi('messages', {'force' : 1}, g:chatwork_token, {'__rid__' : rid})
+
+  " ここは整形済みをキャッシュ対応
+  let content = s:requestApi('messages', {}, g:chatwork_token, {'__rid__' : rid})
+  if type(content) != type('')
+    call extend(s:messageList[rid], content)
+  endif
+  
+  for item in s:messageList[rid]
+    call add(messageData, { 
+      \ 'id' : item.message_id,
+      \ 'name' : item.account.name,
+      \ 'rid' : rid,
+      \ 'aid' : item.account.account_id,
+      \ 'body' : item.body,
+      \ 'send_time' : item.send_time,
+      \ 'update_time' : item.update_time,
+      \ })
+  endfor
+  return messageData
+endfunction
+
 function! chatwork#postMessage(rid, msg)
   let result = s:requestApi('post_message', {'body' : a:msg}, g:chatwork_token, {'__rid__' : a:rid})
   if exists('result.message_id')
     echo '..........Post succeed!!'
   endif
+endfunction
+
+function! chatwork#outputBuffer(name, content)
+  let bufname = "[cw: " . a:name . "]"
+  if !bufexists(bufname)
+    wincmd p
+    vsplit
+    exec "edit " . bufname
+    nnoremap <buffer> q <C-w>c
+    "nnoremap <buffer> r :call chatwork#replyMessage()<CR>
+    setlocal bufhidden=wipe buftype=nofile noswapfile buflisted
+  elseif bufwinnr(bufname) != -1
+    execute bufwinnr(bufname) 'wincmd w'
+  else
+    vsplit
+    execute 'buffer' bufnr(bufname)
+  endif
+  silent % delete _
+  silent $ put =a:content
+endfunction
+
+function! chatwork#updateMessages()
+  " not implement yet
+endfunction
+
+function! chatwork#replyMessage()
+  let line = getline('.')
+  " bufferからもってくればいいかも
 endfunction
 " }}}
 
@@ -51,7 +112,11 @@ function! s:requestApi(name, params, token, replacements)
   let request = 's:Http.' . get(s:paths, a:name).method
   execute "let dataStr = " . request . "(requestUri, a:params, {'X-ChatWorkToken' : '" . a:token . "'})"
   let response = s:Json.decode(string(dataStr))
-  let content = s:Json.decode(response.content)
+  if len(response.content) > 0
+    let content = s:Json.decode(response.content)
+  else
+    let content = ''
+  endif
   if response.status == 401
     echohl ErrorMsg
     echomsg "Eoror: " . content['errors'][0] 
@@ -70,6 +135,7 @@ function! s:getPath(str, replacements)
   endfor
   return path
 endfunction
+
 "}}}
 
 " vim:set et ts=2 sts=2 sw=2 tw=0:
